@@ -119,57 +119,62 @@ class LMWrapper(LM):
         batch_seq = [batch_inputs[i] + batch_targets[i] for i in range(len(batch_inputs))]
         # print(batch_seq)
         # Combined Sequence
-        input_target_tokens = self.tokenizer(batch_seq, 
-        return_tensors="pt", padding=True)
-        input_target_mask = input_target_tokens["attention_mask"].bool().to(self.device)
-        input_target_tokens = input_target_tokens["input_ids"].to(self.device)
+        combined_tokens = self.tokenizer(batch_seq, 
+                                        return_tensors="pt", 
+                                        padding=True,
+                                        add_special_tokens=False)
+
+        combined_mask = combined_tokens["attention_mask"].bool().to(self.device)
+        combined_tokens = combined_tokens["input_ids"].to(self.device)
         
         # Input Sequence
         input_tokens = self.tokenizer(batch_inputs,
-         return_tensors="pt", padding=True)
+                                        return_tensors="pt", 
+                                        padding=True,
+                                        add_special_tokens=False)
         input_len = input_tokens["attention_mask"].sum(dim=1).to(self.device)
         input_tokens = input_tokens["input_ids"].to(self.device)
 
         # Target Sequence
         target_tokens = self.tokenizer(batch_targets,
-         return_tensors="pt", padding=True)
+                                        return_tensors="pt", 
+                                        padding=True,
+                                        add_special_tokens=False)
         # target_len = target_tokens["attention_mask"].sum(dim=1)
-        target_mask = target_tokens["attention_mask"].bool().to(self.device)
+        target_mask = target_tokens["attention_mask"].to(self.device)
         target_tokens = target_tokens["input_ids"].to(self.device)
 
         # print(target_tokens.shape)
 
         # Pass Sequence into Model
-        logits = self.model(input_target_tokens, return_dict=True,).logits
+        logits = self.model(combined_tokens, return_dict=True,).logits
         log_probs = F.log_softmax(logits, dim=-1)
         # Loop through each sequence in the batch
         for batch_idx in range(logits.shape[0]):
             curr_log_probs = log_probs[batch_idx]
+            curr_target_tokens = torch.masked_select(target_tokens[batch_idx], target_mask.bool()[batch_idx])
 
-            # Get target sequence length (excluding padding)
+            # Get Target Sequence Length
             target_len = target_mask[batch_idx].sum().item()
-            # print(target_len)
-            # Get the relevant portion of log probs (after input)
-            start_idx = input_len[batch_idx]
-            relevant_log_probs = curr_log_probs[start_idx:start_idx + target_len - 1]
 
-            # print(relevant_log_probs.shape)
+            # Get Start Index
+            start_idx = input_len[batch_idx] - 1
 
-            # Get corresponding target tokens
-            target_ids = target_tokens[batch_idx, 1:target_len]
+            # Get Logits for Target Sequence
+            curr_log_probs = curr_log_probs[start_idx:start_idx + target_len, :]
 
-            # print(target_ids.shape)
+            # Get probabilities for target sequence
+            row_idx = torch.arange(target_len).to(self.device)
 
-            # print(target_ids)
+            # print("Target Length: ", target_len)
 
+            log_proba = curr_log_probs[row_idx, curr_target_tokens]
 
-            # Calculate log likelihood and check if greedy
-            row_idx = torch.arange(len(target_ids)).to(self.device)
-            logit_vals = relevant_log_probs[row_idx, target_ids]
-            largest_logit_idx = torch.argmax(relevant_log_probs, dim=-1)
-            is_greedy = torch.all(target_ids == largest_logit_idx)
+            # Get Greedy Predictions
+            greedy_preds = torch.argmax(curr_log_probs, dim=-1)
+            is_greedy = torch.all(curr_target_tokens == greedy_preds)
 
-            results.append((logit_vals.sum().item(), is_greedy.item()))
+            results.append((log_proba.sum().item(), is_greedy.item()))
 
         return results
 

@@ -10,17 +10,17 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
 model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-3.2-1B-Instruct")
 
-batch_size = 1
+batch_size = 4
 
 # Using my wrapper (can be used on any model)
-# myLM = LMWrapper(model, tokenizer, batch_size, device=device)
+myLM = LMWrapper(model, tokenizer, batch_size, device=device)
 
 # Using HuggingfaceLM (can only be used on Huggingface models)
-myLM = lm_eval.models.huggingface.HuggingfaceLM(
-    model="meta-llama/Llama-3.2-1B-Instruct",
-    tokenizer="meta-llama/Llama-3.2-1B-Instruct",
-    device=device
-)
+# myLM = lm_eval.models.huggingface.HFLM(
+#     pretrained="meta-llama/Llama-3.2-1B-Instruct",
+#     tokenizer="meta-llama/Llama-3.2-1B-Instruct",
+#     device=device
+# )
 
 task_manager = lm_eval.tasks.TaskManager()
 
