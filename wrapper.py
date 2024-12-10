@@ -2,25 +2,44 @@ import lm_eval
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
 from tqdm import tqdm
+from transformers import PreTrainedTokenizer, PreTrainedModel, GenerationConfig
+from typing import Union, Optional, Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 class LMWrapper(LM):
-    def __init__(self, model, tokenizer, batch_size,device):
+    def __init__(
+        self, 
+        model: Union[PreTrainedModel, nn.Module],
+        tokenizer: PreTrainedTokenizer, 
+        batch_size: int,
+        device: str,
+        model_type: Literal["huggingface", "custom"] = "huggingface",
+    ):
         super().__init__()
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.batch_size = batch_size
+        self.model_type = model_type
 
-        self.tokenizer.pad_token = self.tokenizer.eos_token
+        if tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+            
         self.model.to(self.device)
     
     def loglikelihood_rolling(self, requests: list[Instance]) -> list[float]:
         '''
         Returns a list of log probabilities for each request. 
+
+        args: 
+            requests: list[Instance], where each instance = (input_str,)
+
+        returns:
+            list[float], where each float is log p(input_str)
         '''
 
         results = []
@@ -63,45 +82,55 @@ class LMWrapper(LM):
         return results
     
     def generate_until(self, requests: list[Instance]) -> list[str]:
-        pass
         '''
-        def generate_until(self, requests: list[Instance]) -> list[str]:
+        Generate text for each request until a stop condition is met.
+        
+        args:
+            requests: list[Instance], where each instance = (input_str, gen_args)
+            gen_args is a dict that may contain:
+                - 'until': list of strings to stop at
+                - 'max_gen_toks': maximum number of tokens to generate
+        
+        returns:
+            list[str]: Generated text (input + output) for each request
+        '''
         results = []
 
         print(f"Generating {len(requests)} requests")
-        for i, request in enumerate(requests):
+        for request in tqdm(requests):
             input_str, gen_args = request.args
-
-            # print(input_str)
-            # print(gen_args)
-
             
+            if self.model_type == "huggingface":
+                input_dict = self.tokenizer(
+                    input_str, 
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True
+                )
 
+                input_ids = input_dict["input_ids"].to(self.device)
+                attention_mask = input_dict["attention_mask"].to(self.device)
 
-            input_ids = self.tokenizer.encode(input_str)
+                max_gen_toks = gen_args.get('max_gen_toks', 128)
+                until_list = gen_args.get('until', [])
 
-            print(gen_args['until'])
+                generation_config = GenerationConfig(
+                    max_new_tokens=max_gen_toks,
+                    pad_token_id=self.tokenizer.pad_token_id,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    stop_strings=until_list,
+                )
 
-            end_token_list = [self.tokenizer.encode(token) for token in gen_args['until']]
-            
-            max_len = gen_args.get('max_len', 400)
+                generated_text = self.model.generate(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    generation_config=generation_config,
+                    tokenizer=self.tokenizer
+                )
+            results.append(generated_text)
 
-            print(end_token_list)
-            
-            output_ids = self.model.generate(input_ids,  max_len=max_len, end_token_list=end_token_list, device=self.device)
-
-            output_str = self.tokenizer.decode(output_ids)
-            
-            print(output_str)
-
-            sys.exit(0)
-
-            results.append(output_str)
-            print(f"Processed request {i+1}")
-        # results = [" blah " for _ in requests]
         return results
-        '''
-        return []
+
 
     def loglik_helper(
         self, 
@@ -147,7 +176,11 @@ class LMWrapper(LM):
         # print(target_tokens.shape)
 
         # Pass Sequence into Model
-        logits = self.model(combined_tokens, return_dict=True,).logits
+        if self.model_type == "huggingface":
+            logits = self.model(combined_tokens, return_dict=True,).logits
+        else:
+            logits = self.model(combined_tokens)
+
         log_probs = F.log_softmax(logits, dim=-1)
         # Loop through each sequence in the batch
         for batch_idx in range(logits.shape[0]):
