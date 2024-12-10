@@ -121,12 +121,18 @@ class LMWrapper(LM):
                     stop_strings=until_list,
                 )
 
-                generated_text = self.model.generate(
+                generated_tokens = self.model.generate(
                     input_ids,
                     attention_mask=attention_mask,
                     generation_config=generation_config,
                     tokenizer=self.tokenizer
                 )
+
+                generated_text = self.tokenizer.decode(
+                    generated_tokens[0], 
+                    skip_special_tokens=True
+                )
+
             results.append(generated_text)
 
         return results
