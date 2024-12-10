@@ -137,37 +137,38 @@ class LMWrapper(LM):
         target_mask = target_tokens["attention_mask"].bool().to(self.device)
         target_tokens = target_tokens["input_ids"].to(self.device)
 
+        # print(target_tokens.shape)
 
         # Pass Sequence into Model
         logits = self.model(input_target_tokens, return_dict=True,).logits
-
+        log_probs = F.log_softmax(logits, dim=-1)
         # Loop through each sequence in the batch
         for batch_idx in range(logits.shape[0]):
-            # Get the current logits
-            curr_logits = logits[batch_idx, :, :]   
+            curr_log_probs = log_probs[batch_idx]
 
-            # Get rid of the padding tokens
-            T, C = curr_logits.shape
-            curr_logits = torch.masked_select(curr_logits, 
-            input_target_mask[batch_idx, :].unsqueeze(-1)).view(-1, C)
+            # Get target sequence length (excluding padding)
+            target_len = target_mask[batch_idx].sum().item()
+            # print(target_len)
+            # Get the relevant portion of log probs (after input)
+            start_idx = input_len[batch_idx]
+            relevant_log_probs = curr_log_probs[start_idx:start_idx + target_len - 1]
 
-            # Get rid of the input tokens
-            curr_logits = curr_logits[input_len[batch_idx]:, :]
-            curr_logits = F.log_softmax(curr_logits, dim=-1)    
+            # print(relevant_log_probs.shape)
 
-            # Get the target tokens
-            target_ids = torch.masked_select(target_tokens[batch_idx, 1:], 
-            target_mask[batch_idx, 1:])
+            # Get corresponding target tokens
+            target_ids = target_tokens[batch_idx, 1:target_len]
 
-            # Logit Values
+            # print(target_ids.shape)
+
+            # print(target_ids)
+
+
+            # Calculate log likelihood and check if greedy
             row_idx = torch.arange(len(target_ids)).to(self.device)
-            logit_vals = curr_logits[row_idx, target_ids]
-
-            # See if greedy
-            largest_logit_idx = torch.argmax(curr_logits, dim=-1)
+            logit_vals = relevant_log_probs[row_idx, target_ids]
+            largest_logit_idx = torch.argmax(relevant_log_probs, dim=-1)
             is_greedy = torch.all(target_ids == largest_logit_idx)
 
-            # Append to results
             results.append((logit_vals.sum().item(), is_greedy.item()))
 
         return results
